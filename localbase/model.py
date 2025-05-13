@@ -4,7 +4,7 @@ from langchain_community.embeddings.fastembed import FastEmbedEmbeddings
 from langchain_core.language_models import BaseLanguageModel
 from langchain_groq import ChatGroq
 
-from ragbase.config import Config
+from localbase.config import Config
 
 def create_llm() -> BaseLanguageModel:
     if Config.Model_USE_LOCAL:
