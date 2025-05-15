@@ -12,7 +12,7 @@ from langchain_core.tracers.stdout import ConsoleCallbackHandler
 from langchain_core.vectorstores import VectorStoreRetriever
 
 from localbase.config import Config
-from localbase.session_history import SessionHistory
+from localbase.session_history import get_session_history
 
 SYSTEM_PROMPT = """
 Utilize the provided contextual information to respond to the user question.
@@ -26,4 +26,60 @@ Context:
 
 Use markdown formatting where appropriate.
 """
+
+def remove_links(text : str) -> str:
+     url_pattern = r"https?://\S+|www\.\S+"
+     return re.sub(url_pattern, "", text)
+
+
+def format_documents(documents : List[Document]) -> str:
+     texts = []
+     for doc in documents:
+          texts.append(doc.page_content)
+          texts.append("---")
+
+     return remove_links("\n".join(texts))
+
+
+def create_chain(llm : BaseLanguageModel,retriever : VectorStoreRetriever) -> Runnable:
+     prompt = ChatPromptTemplate.from_messages(
+          [
+               ("system",SYSTEM_PROMPT),
+               MessagesPlaceholder("chat_history"),
+               ("human", "{input}"),
+          ]
+
+     )
+
+     chain = RunnablePassthrough.assign(
+          context = itemgetter("context")  | retriever.with_config({"run_name": "context_retriever"}) | format_documents
+     ) | prompt | llm
+
+
+
+     return RunnableWithMessageHistory(
+          chain,
+          get_session_history,
+          input_messages_key="question",
+          history_messages_key="chat_history",
+     ).with_config({"run_name" :"chain_answer"})
+
+
+async def ask_question(chain : Runnable,question : str,session_id : str) :
+     async for event in chain.astream_events(
+           {"question": question},
+        config={
+            "callbacks": [ConsoleCallbackHandler()] if Config.DEBUG else [],
+            "configurable": {"session_id": session_id},
+        },
+        version="v2",
+        include_names=["context_retriever", "chain_answer"],
+     ):
+          event_type = event["event"]
+
+          if event_type == "on_retriever_end":
+               yield event["data"]["output"]
+
+          if event_type == "on_chain_stream":
+               yield event["data"]["chunk"].content
 
